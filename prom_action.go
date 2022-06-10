@@ -121,6 +121,10 @@ func (store *FileMetricsStore) UploadToVM(endpoint string, headers map[string]st
 	if concurrency < 1 {
 		concurrency = 1
 	}
+	// validate the endpoint
+	if _, err := http.NewRequest(http.MethodPost, endpoint+"/api/v1/import", nil); err != nil {
+		return err
+	}
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -398,7 +402,7 @@ func promDumpMetric(out MetricsWriter, selector map[string]string, opts PromDump
 			}
 			lines, err := PromQueryMatrix(opts.Endpoint, opts.Headers, query, start, end, opts.Step)
 			if err != nil {
-				glog.Warningf("query metrics line(%q,%d,%d,%d): %v", query, start, end, opts.Step, err)
+				glog.Errorf("query metrics line(%q,%d,%d,%d): %v", query, start, end, opts.Step, err)
 				continue
 			}
 			for _, line := range lines {
