@@ -58,6 +58,7 @@ func newMetricsCopy() *cobra.Command {
 	cmd.Flags().StringToStringVar(&store.Headers, "vm.headers", map[string]string{}, "additional http headers for victoria-metrics requests")
 	cmd.Flags().StringToStringVar(&store.Labels, "labels", map[string]string{}, "extra labels")
 	cmd.Flags().IntVar(&store.Batch, "batch", 50, "import batch size")
+	cmd.Flags().Uint64Var(&store.Rebase, "rebase", 0, "rebase time of metrics (in epoch second)")
 	cmd.Flags().StringVar(&filter, "filter", "", "metrics filter regexp")
 	cmd.Flags().BoolVar(&silent, "silent", false, "silent mode")
 
@@ -71,6 +72,7 @@ func newMetricsDump() *cobra.Command {
 		filter string
 		dir    string
 		gz     int
+		rebase uint64
 		silent bool
 	)
 	cmd := &cobra.Command{
@@ -86,7 +88,7 @@ func newMetricsDump() *cobra.Command {
 				}
 				opts.Filter = re
 			}
-			store, err := NewFileMetricsStore(dir, gz)
+			store, err := NewFileMetricsStore(dir, gz, rebase)
 			if err != nil {
 				return err
 			}
@@ -107,14 +109,20 @@ func newMetricsDump() *cobra.Command {
 	cmd.Flags().StringVar(&filter, "filter", "", "metrics filter regexp")
 	cmd.Flags().StringVar(&dir, "dir", "/tmp/metrics.d", "output directory")
 	cmd.Flags().IntVar(&gz, "gzip", flate.DefaultCompression, "gzip compression level (-1:DefaultCompression 0:NoCompression 1:BestSpeed 9:BestCompression)")
+	cmd.Flags().Uint64Var(&rebase, "rebase", 0, "rebase time of metrics (in epoch second)")
 	cmd.Flags().BoolVar(&silent, "silent", false, "silent mode")
+
+	// keeping data as it is recommanded
+	cmd.Flags().MarkHidden("rebase")
 	return cmd
 }
 
 func newMetricsLoad() *cobra.Command {
 	var (
 		dir     string
+		gz      int
 		threads int
+		rebase  uint64
 		headers map[string]string
 		labels  map[string]string
 		silent  bool
@@ -124,18 +132,20 @@ func newMetricsLoad() *cobra.Command {
 		Short: "Load metrics data to victoria-metrics",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := NewFileMetricsStore(dir, flate.DefaultCompression)
+			store, err := NewFileMetricsStore(dir, gz, rebase)
 			if err != nil {
 				return err
 			}
 			if !silent {
-				store.ShowProgress("loading")
+				store.ShowProgress(true)
 			}
 			return store.UploadToVM(args[0], headers, labels, threads)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "/tmp/metrics.d", "input directory")
 	cmd.Flags().IntVar(&threads, "threads", runtime.NumCPU()*2, "number of worker threads")
+	cmd.Flags().IntVar(&gz, "gzip", flate.DefaultCompression, "gzip compression level (-1:DefaultCompression 0:NoCompression 1:BestSpeed 9:BestCompression)")
+	cmd.Flags().Uint64Var(&rebase, "rebase", 0, "rebase time of metrics (in epoch second)")
 	cmd.Flags().StringToStringVar(&headers, "vm.headers", map[string]string{}, "additional http headers for victoria-metrics requests")
 	cmd.Flags().StringToStringVar(&labels, "labels", map[string]string{}, "extra labels")
 	cmd.Flags().BoolVar(&silent, "silent", false, "silent mode")

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,18 +59,21 @@ type MetricsStore interface {
 	Open(name string) (MetricsWriter, error)
 }
 
-type metricsFile struct {
+type metricsFileWriter struct {
 	file *os.File
 	buf  *bufio.Writer
 	zip  *gzip.Writer
 	enc  *json.Encoder
+
+	rebase uint64
 }
 
-func (f *metricsFile) Write(line PromMetricLine) error {
+func (f *metricsFileWriter) Write(line PromMetricLine) error {
+	line.Rebase = f.rebase
 	return f.enc.Encode(line)
 }
 
-func (f *metricsFile) Close() error {
+func (f *metricsFileWriter) Close() error {
 	if err := f.zip.Close(); err != nil {
 		f.buf.Flush()
 		f.file.Close()
@@ -86,13 +90,15 @@ type FileMetricsStore struct {
 	dir string
 	gz  int
 	pb  ProgressListener
+
+	rebase uint64
 }
 
-func NewFileMetricsStore(dir string, gz int) (*FileMetricsStore, error) {
+func NewFileMetricsStore(dir string, gz int, rebase uint64) (*FileMetricsStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	return &FileMetricsStore{dir: dir, gz: gz, pb: NoopProgressListener{}}, nil
+	return &FileMetricsStore{dir: dir, gz: gz, pb: NoopProgressListener{}, rebase: rebase}, nil
 }
 
 func (store *FileMetricsStore) Open(name string) (MetricsWriter, error) {
@@ -102,11 +108,11 @@ func (store *FileMetricsStore) Open(name string) (MetricsWriter, error) {
 	}
 	buf := bufio.NewWriter(f)
 	zip := gzip.NewWriter(buf)
-	return &metricsFile{file: f, buf: buf, zip: zip, enc: json.NewEncoder(zip)}, nil
+	return &metricsFileWriter{file: f, buf: buf, zip: zip, enc: json.NewEncoder(zip), rebase: store.rebase}, nil
 }
 
-func (store *FileMetricsStore) ShowProgress(action string) {
-	if len(action) > 0 {
+func (store *FileMetricsStore) ShowProgress(ok bool) {
+	if ok {
 		store.pb = &ConsoleProgressListener{}
 	} else {
 		store.pb = NoopProgressListener{}
@@ -130,7 +136,7 @@ func (store *FileMetricsStore) UploadToVM(endpoint string, headers map[string]st
 		go func() {
 			defer wg.Done()
 			for n := range in {
-				f, err := os.Open(n)
+				f, err := store.openMetricsFile(n)
 				if err != nil {
 					glog.Warningf("open %q: %v", n, err)
 					continue
@@ -161,7 +167,7 @@ func (store *FileMetricsStore) UploadToVM(endpoint string, headers map[string]st
 			}
 		}()
 	}
-	ns, err := filepath.Glob(filepath.Join(store.dir, "/*.jsonl.gz"))
+	ns, err := filepath.Glob(filepath.Join(store.dir, "*.jsonl.gz"))
 	if err != nil {
 		return err
 	}
@@ -176,13 +182,83 @@ func (store *FileMetricsStore) UploadToVM(endpoint string, headers map[string]st
 	return nil
 }
 
+func (store *FileMetricsStore) openMetricsFile(name string) (io.ReadCloser, error) {
+	f, err := os.Open(name)
+	if store.rebase == 0 {
+		return f, err
+	}
+	return newRebasedMetricsFile(f, store.rebase)
+
+}
+
+func newRebasedMetricsFile(f *os.File, rebase uint64) (*rebasedMetricsFile, error) {
+	r, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	buf := new(bytes.Buffer)
+	zip := gzip.NewWriter(buf)
+
+	return &rebasedMetricsFile{
+		src:    f,
+		dec:    json.NewDecoder(r),
+		enc:    json.NewEncoder(zip),
+		buf:    buf,
+		zip:    zip,
+		rebase: rebase,
+	}, nil
+}
+
+type rebasedMetricsFile struct {
+	src *os.File
+	dec *json.Decoder
+	enc *json.Encoder
+	buf *bytes.Buffer
+	zip *gzip.Writer
+
+	rebase uint64
+}
+
+func (f *rebasedMetricsFile) next() bool { return f.dec != nil }
+
+func (f *rebasedMetricsFile) done() {
+	f.zip.Close()
+	f.dec = nil
+}
+
+func (f *rebasedMetricsFile) Read(p []byte) (n int, err error) {
+	if f.buf.Len() == 0 && f.next() {
+		var line PromMetricLine
+		if err := f.dec.Decode(&line); err != nil {
+			f.done()
+			if errors.Is(err, io.EOF) {
+				return f.buf.Read(p)
+			}
+			return 0, err
+		}
+		line.Rebase = f.rebase
+		if err := f.enc.Encode(line); err != nil {
+			f.done()
+			return 0, err
+		}
+	}
+	return f.buf.Read(p)
+}
+
+func (f *rebasedMetricsFile) Close() error {
+	return f.src.Close()
+}
+
 type vmWriter struct {
-	store *VictoriaMetricsStore
-	lines []PromMetricLine
-	buf   bytes.Buffer
+	store  *VictoriaMetricsStore
+	lines  []PromMetricLine
+	buf    bytes.Buffer
+	rebase uint64
 }
 
 func (w *vmWriter) Write(line PromMetricLine) error {
+	line.Rebase = w.rebase
 	w.lines = append(w.lines, line)
 	if len(w.lines) >= w.store.Batch {
 		return w.Flush()
@@ -236,10 +312,11 @@ type VictoriaMetricsStore struct {
 	Headers  map[string]string
 	Labels   map[string]string
 	Batch    int
+	Rebase   uint64
 }
 
 func (store *VictoriaMetricsStore) Open(name string) (MetricsWriter, error) {
-	return &vmWriter{store: store, lines: make([]PromMetricLine, 0, store.Batch)}, nil
+	return &vmWriter{store: store, lines: make([]PromMetricLine, 0, store.Batch), rebase: store.Rebase}, nil
 }
 
 type PromDumpOptions struct {

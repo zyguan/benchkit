@@ -12,6 +12,7 @@ import (
 type PromMetricLine struct {
 	Metric map[string]string `json:"metric"`
 	Values [][2]any          `json:"values"`
+	Rebase uint64            `json:"-"`
 }
 
 func (m PromMetricLine) Empty() bool {
@@ -26,7 +27,8 @@ func (m PromMetricLine) Empty() bool {
 
 func (m PromMetricLine) MarshalJSON() ([]byte, error) {
 	ts, vs := make([]uint64, 0, len(m.Values)), make([]float64, 0, len(m.Values))
-	for _, tuple := range m.Values {
+	var startTime uint64
+	for i, tuple := range m.Values {
 		t, ok := tuple[0].(float64)
 		if !ok {
 			continue
@@ -35,7 +37,14 @@ func (m PromMetricLine) MarshalJSON() ([]byte, error) {
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			continue
 		}
-		ts = append(ts, uint64(t*1000))
+		epochMillis := uint64(t * 1000)
+		if i == 0 {
+			startTime = epochMillis
+		}
+		if m.Rebase > 0 {
+			epochMillis = m.Rebase*1000 + epochMillis - startTime
+		}
+		ts = append(ts, epochMillis)
 		vs = append(vs, v)
 	}
 	var obj struct {
