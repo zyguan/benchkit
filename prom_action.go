@@ -131,6 +131,20 @@ func (store *FileMetricsStore) UploadToVM(endpoint string, headers map[string]st
 	if _, err := http.NewRequest(http.MethodPost, endpoint+"/api/v1/import", nil); err != nil {
 		return err
 	}
+
+	if meta, err := os.ReadFile(filepath.Join(store.dir, "bench.json")); err == nil {
+		var info struct {
+			ID string `json:"id"`
+		}
+		err = json.Unmarshal(meta, &info)
+		if err == nil && len(info.ID) > 0 {
+			if labels == nil {
+				labels = make(map[string]string)
+			}
+			labels["bench"] = info.ID
+		}
+	}
+
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -313,6 +327,13 @@ type VictoriaMetricsStore struct {
 	Labels   map[string]string
 	Batch    int
 	Rebase   uint64
+}
+
+func (store *VictoriaMetricsStore) SetLabel(name string, value string) {
+	if store.Labels == nil {
+		store.Labels = make(map[string]string)
+	}
+	store.Labels[name] = value
 }
 
 func (store *VictoriaMetricsStore) Open(name string) (MetricsWriter, error) {

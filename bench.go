@@ -56,6 +56,7 @@ func BenchRun(ctx context.Context, name string, tags []string, proc string, args
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	result := BenchResult{
+		ID:   uuid.NewString(),
 		Name: name,
 		Tags: tags,
 		Cmd:  append([]string{proc}, args...),
@@ -117,7 +118,7 @@ func (store *benchResultStore) handlePutBenchResult(w http.ResponseWriter, r *ht
 		return
 	}
 	if len(result.ID) == 0 {
-		result.ID = uuid.New().String()
+		result.ID = uuid.NewString()
 	}
 	cmd, _ := json.Marshal(result.Cmd)
 

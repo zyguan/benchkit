@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "latest"
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		glog.Errorf("execute error: %+v", err)
@@ -19,7 +21,8 @@ func main() {
 func newRootCmd() *cobra.Command {
 	flag.CommandLine.Parse(nil)
 	cmd := &cobra.Command{
-		Use: "benchkit",
+		Use:     "benchkit",
+		Version: version,
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			glog.Flush()
 		},

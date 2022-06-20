@@ -1,11 +1,14 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 
@@ -19,12 +22,11 @@ func newBenchRunCmd() *cobra.Command {
 	var (
 		tags   []string
 		name   string
-		report string
-		prom   string
-		vm     string
+		server string
+		dir    string
 		filter string
 		opts   PromDumpOptions
-		store  VictoriaMetricsStore
+		remote VictoriaMetricsStore
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -43,23 +45,44 @@ func newBenchRunCmd() *cobra.Command {
 				opts.Filter = re
 			}
 			result := BenchRun(ctx, name, tags, args[0], args[1:]...)
-			glog.Infof("bench result: id=%s exit=%d", result.ID, result.Exit)
+			glog.Infof("bench result: exit=%d id=%s cmd=%v", result.Exit, result.ID, result.Cmd)
 
-			if len(prom) > 0 && len(vm) > 0 {
-				glog.Infof("copy metrics from %s to %s", prom, vm)
-				opts.Endpoint, store.Endpoint = prom, vm
-				opts.Start, opts.End = result.Started, result.Finished
-				err := PromDumpMetrics(&store, opts.SetDefaults())
+			var (
+				store MetricsStore
+				dst   string
+			)
+			opts.Start, opts.End = result.Started, result.Finished
+			if len(opts.Endpoint) > 0 && len(remote.Endpoint) > 0 {
+				remote.SetLabel("bench", result.ID)
+				store, dst = &remote, remote.Endpoint
+			} else if len(opts.Endpoint) > 0 {
+				if len(dir) == 0 {
+					dir = "metrics." + result.ID + ".d"
+				}
+				local, err := NewFileMetricsStore(dir, gzip.DefaultCompression, 0)
 				if err != nil {
-					glog.Errorf("failed to copy metrics from %s to %s: %v", prom, vm, err)
+					glog.Errorf("failed to open metrics store from %s: %v", dir, err)
+				} else {
+					store, dst = local, dir
+					f, err := os.OpenFile(filepath.Join(dir, "bench.json"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+					if err == nil {
+						json.NewEncoder(f).Encode(result)
+						f.Close()
+					}
+				}
+			}
+			if store != nil {
+				glog.Infof("dumping metrics from %s to %s", opts.Endpoint, dst)
+				if err := PromDumpMetrics(store, opts.SetDefaults()); err != nil {
+					glog.Errorf("failed to dump metrics from %s to %s: %v", opts.Endpoint, dst, err)
 				}
 			}
 
-			if len(report) > 0 {
-				glog.Infof("report to %s", report)
-				err := result.ReportTo(report)
+			if len(server) > 0 {
+				glog.Infof("reporting result to %s", server)
+				err := result.ReportTo(server)
 				if err != nil {
-					glog.Errorf("failed to report to %s: %v", report, err)
+					glog.Errorf("failed to report to %s: %v", server, err)
 					return err
 				}
 			}
@@ -69,20 +92,22 @@ func newBenchRunCmd() *cobra.Command {
 
 	cmd.Flags().StringSliceVarP(&tags, "tag", "t", []string{}, "benchmark tags")
 	cmd.Flags().StringVar(&name, "name", "", "benchmark name")
-	cmd.Flags().StringVar(&report, "report-to", "", "endpoint to report to")
-	cmd.Flags().StringVar(&prom, "prom", "", "prometheus endpoint")
-	cmd.Flags().StringVar(&vm, "vm", "", "victoria-metrics endpoint")
+	cmd.Flags().StringVar(&server, "server", "", "server endpoint to report to")
+	cmd.Flags().StringVar(&dir, "dir", "", "output directory")
+	cmd.Flags().StringVar(&filter, "filter", "", "metrics filter regexp")
+
+	cmd.Flags().StringVar(&opts.Endpoint, "prom", "", "prometheus endpoint")
 	cmd.Flags().Int64Var(&opts.Step, "step", 15, "resolution step")
 	cmd.Flags().IntVar(&opts.MaxSteps, "steps", 720, "max steps per query")
 	cmd.Flags().IntVar(&opts.MaxSamples, "samples", 50000000, "max samples per query")
 	cmd.Flags().IntVar(&opts.Concurrency, "threads", runtime.NumCPU()*2, "number of worker threads")
 	cmd.Flags().StringToStringVar(&opts.Selector, "selector", map[string]string{}, "series selector")
 	cmd.Flags().StringToStringVar(&opts.Headers, "headers", map[string]string{}, "additional http headers for prometheus requests")
-	cmd.Flags().StringToStringVar(&store.Headers, "vm.headers", map[string]string{}, "additional http headers for victoria-metrics requests")
-	cmd.Flags().StringToStringVar(&store.Labels, "labels", map[string]string{}, "extra labels")
-	cmd.Flags().IntVar(&store.Batch, "batch", 50, "import batch size")
-	cmd.Flags().Uint64Var(&store.Rebase, "rebase", 0, "rebase time of metrics (in epoch second)")
-	cmd.Flags().StringVar(&filter, "filter", "", "metrics filter regexp")
+
+	cmd.Flags().StringVar(&remote.Endpoint, "vm", "", "victoria-metrics endpoint")
+	cmd.Flags().StringToStringVar(&remote.Headers, "vm.headers", map[string]string{}, "additional http headers for victoria-metrics requests")
+	cmd.Flags().StringToStringVar(&remote.Labels, "labels", map[string]string{}, "extra labels")
+	cmd.Flags().IntVar(&remote.Batch, "batch", 50, "import batch size")
 
 	cmd.Flags().MarkHidden("vm.headers")
 	return cmd
