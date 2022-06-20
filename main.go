@@ -35,5 +35,7 @@ func newRootCmd() *cobra.Command {
 		cmd.PersistentFlags().AddGoFlag(f)
 	})
 	cmd.AddCommand(newMetricsCmd())
+	cmd.AddCommand(newBenchRunCmd())
+	cmd.AddCommand(newBenchServerCmd())
 	return cmd
 }

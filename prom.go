@@ -125,8 +125,6 @@ func PromQueryMatrix(endpoint string, headers map[string]string, query string, s
 	return data.Result, nil
 }
 
-var client *http.Client = http.DefaultClient
-
 func promNewGetRequest(endpoint string, headers map[string]string, path string, queries ...string) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodGet, endpoint+path, nil)
 	if err != nil {
