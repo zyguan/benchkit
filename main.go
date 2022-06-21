@@ -40,5 +40,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newMetricsCmd())
 	cmd.AddCommand(newBenchRunCmd())
 	cmd.AddCommand(newBenchServerCmd())
+	cmd.AddCommand(newMarkdownRenderCmd())
 	return cmd
 }

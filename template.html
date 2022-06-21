@@ -1,0 +1,95 @@
+<html>
+
+<head>
+  <title>{{.Title}}</title>
+  <meta charset="UTF-8" />
+  <meta content="width=device-width, initial-scale=1" name="viewport" />
+  <link href="https://cdn.jsdelivr.net/gh/volca/markdown-preview/theme/YetAnotherGithub.css" rel="stylesheet" />
+  <style>
+    @media screen and (min-width: 1280px) {
+      body {
+        width: 1240px;
+        margin: 0 auto;
+      }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega@5.21.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5.2.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.20.2"></script>
+  <script>
+    class PromClient {
+      constructor(endpoint) {
+        this.endpoint = endpoint;
+      }
+      queryInstant(params) {
+        return fetch(`${this.endpoint}/api/v1/query?${new URLSearchParams(params).toString()}`)
+          .then(resp => resp.json())
+          .then(body => {
+            console.assert(body.status == 'success' && body.data.resultType == 'vector', 'unexpected response body');
+            const base = typeof params.base === 'object' ? params.base : {};
+            const vals = body.data.result.map(m => ({ ts: m.value[0] * 1000, value: Number(m.value[1]), ...base, ...m.metric }));
+            return vals;
+          })
+      }
+      queryRange(params) {
+        return fetch(`${this.endpoint}/api/v1/query_range?${new URLSearchParams(params).toString()}`)
+          .then(resp => resp.json())
+          .then(body => {
+            console.assert(body.status == 'success' && body.data.resultType == 'matrix', 'unexpected response body');
+            const base = typeof params.base === 'object' ? params.base : {};
+            const vecs = body.data.result.map(m => m.values.map(([t, v]) => ({ ts: t * 1000, value: Number(v), ...base, ...m.metric })));
+            return [].concat(...vecs);
+          })
+      }
+    }
+    class Renderer extends marked.Renderer {
+      constructor(options) {
+        super(options);
+        this.postActions = [];
+      }
+      applyPostActions() {
+        this.postActions.forEach(fn => fn());
+        this.postActions = [];
+      }
+      appendScript(src) {
+        this.postActions.push(function () {
+          const elem = document.createElement('script');
+          elem.innerHTML = src;
+          document.body.appendChild(elem);
+        });
+      }
+      genID() {
+        return `vega-${window.crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}`;
+      }
+      code(text, lang, escaped) {
+        if (lang == 'vega-global') {
+          this.appendScript(text);
+          return '';
+        } else if (lang == 'vega-code') {
+          const id = this.genID();
+          this.appendScript(`(async function(id) {\n${text}\n})("${id}")`);
+          return `<div id="${id}" style="width: 100%;"></div>\n`;
+        } else if (lang == 'vega-spec') {
+          const id = this.genID();
+          this.appendScript(`(async function() { vegaEmbed("#${id}", ${text}); })()`);
+          return `<div id="${id}" style="width: 100%;"></div>\n`;
+        } else {
+          return super.code(text, lang, escaped);
+        }
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="content" class="container"></div>
+  <script id="markdown" type="text/plain">{{.Markdown}}</script>
+  <script>
+    marked.setOptions({ renderer: new Renderer() });
+    document.getElementById('content').innerHTML = marked.parse(document.getElementById('markdown').innerText);
+    marked.defaults.renderer.applyPostActions();
+  </script>
+</body>
+
+</html>
