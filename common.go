@@ -20,6 +20,14 @@ func withAccessLog(h http.Handler) http.Handler {
 	})
 }
 
+func allowCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
+		h.ServeHTTP(w, r)
+	})
+}
+
 type ErrorResponse struct {
 	Code  int    `json:"code,omitempty"`
 	Error string `json:"error"`

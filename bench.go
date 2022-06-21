@@ -101,7 +101,7 @@ func BenchServerInitDB(db *sql.DB) error {
 func BenchServerHandler(db *sql.DB) http.Handler {
 	store := &benchResultStore{db: db}
 	r := mux.NewRouter()
-	r.Use(withAccessLog)
+	r.Use(withAccessLog, allowCORS)
 	r.HandleFunc("/results", store.handlePutBenchResult).Methods(http.MethodPut, http.MethodPost)
 	return r
 }
