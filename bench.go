@@ -11,10 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "embed"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/golang/glog"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
@@ -103,11 +107,63 @@ func BenchServerHandler(db *sql.DB) http.Handler {
 	r := mux.NewRouter()
 	r.Use(withAccessLog, allowCORS)
 	r.HandleFunc("/results", store.handlePutBenchResult).Methods(http.MethodPut, http.MethodPost)
+	r.HandleFunc("/results", store.handleListBenchResult).Methods(http.MethodGet)
 	return r
 }
 
 type benchResultStore struct {
 	db *sql.DB
+}
+
+func (store *benchResultStore) handleListBenchResult(w http.ResponseWriter, r *http.Request) {
+	var (
+		query  = strings.TrimSpace(r.URL.Query().Get("query"))
+		limit  = 10
+		offset = 0
+
+		includeOutput = false
+	)
+	if r.URL.Query().Has("limit") {
+		v, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
+		if err != nil {
+			httpReturnError(w, http.StatusBadRequest, err)
+			return
+		}
+		limit = int(v)
+	}
+	if r.URL.Query().Has("offset") {
+		v, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
+		if err != nil {
+			httpReturnError(w, http.StatusBadRequest, err)
+			return
+		}
+		limit = int(v)
+	}
+	if r.URL.Query().Has("includeOutput") {
+		v := r.URL.Query().Get("includeOutput")
+		if v == "1" || strings.ToLower(v) == "true" {
+			includeOutput = true
+		}
+	}
+	q, args, err := BuildQuerySQL(query, includeOutput, limit, offset)
+	if err != nil {
+		glog.Warningf("failed to build query from %+v: %v", r.URL.Query(), err)
+		httpReturnError(w, http.StatusBadRequest, err)
+		return
+	}
+	glog.Infof("compile query from %+v to %q %v", r.URL.Query(), q, args)
+	rs, err := QueryBenchResults(context.Background(), store.db, q, args)
+	if err != nil {
+		glog.Warningf("failed to execute query: %v", err)
+		myerr, ok := err.(*mysql.MySQLError)
+		status := http.StatusInternalServerError
+		if ok && myerr.Number == 1064 {
+			status = http.StatusBadRequest
+		}
+		httpReturnError(w, status, err)
+		return
+	}
+	httpReturnJSON(w, http.StatusOK, rs)
 }
 
 func (store *benchResultStore) handlePutBenchResult(w http.ResponseWriter, r *http.Request) {
