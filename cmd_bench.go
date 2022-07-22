@@ -90,7 +90,7 @@ func newBenchRunCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&tags, "tag", "t", []string{}, "benchmark tags")
+	cmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "benchmark tags")
 	cmd.Flags().StringVar(&name, "name", "", "benchmark name")
 	cmd.Flags().StringVar(&server, "server", "", "server endpoint to report to")
 	cmd.Flags().StringVar(&dir, "dir", "", "output directory")
