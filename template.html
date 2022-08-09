@@ -17,13 +17,15 @@
   <script src="https://cdn.jsdelivr.net/npm/vega@5.21.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/vega-lite@5.2.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.20.2"></script>
+  <script src='https://cdn.plot.ly/plotly-2.12.1.min.js'></script>
   <script>
     class PromClient {
-      constructor(endpoint) {
+      constructor(endpoint, headers={}) {
         this.endpoint = endpoint;
+        this.headers = headers;
       }
       queryInstant(params) {
-        return fetch(`${this.endpoint}/api/v1/query?${new URLSearchParams(params).toString()}`)
+        return fetch(`${this.endpoint}/api/v1/query?${new URLSearchParams(params).toString()}`, {headers: this.headers})
           .then(resp => resp.json())
           .then(body => {
             console.assert(body.status == 'success' && body.data.resultType == 'vector', 'unexpected response body');
@@ -33,7 +35,7 @@
           })
       }
       queryRange(params) {
-        return fetch(`${this.endpoint}/api/v1/query_range?${new URLSearchParams(params).toString()}`)
+        return fetch(`${this.endpoint}/api/v1/query_range?${new URLSearchParams(params).toString()}`, {headers: this.headers})
           .then(resp => resp.json())
           .then(body => {
             console.assert(body.status == 'success' && body.data.resultType == 'matrix', 'unexpected response body');
@@ -60,20 +62,26 @@
         });
       }
       genID() {
-        return `vega-${window.crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}`;
+        return `code-${window.crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}`;
       }
       code(text, lang, escaped) {
-        if (lang == 'vega-global') {
+        if (!lang.startsWith('js:')) {
+          return super.code(text, lang, escaped);
+        }
+        const info = /^js:(\w+)(\{(.*)\})?$/.exec(lang);
+        if (info[1] == 'global') {
           this.appendScript(text);
           return '';
-        } else if (lang == 'vega-code') {
+        } else if (info[1] == 'div') {
           const id = this.genID();
+          const style = info[3] || '';
           this.appendScript(`(async function(id) {\n${text}\n})("${id}")`);
-          return `<div id="${id}" style="width: 100%;"></div>\n`;
-        } else if (lang == 'vega-spec') {
+          return `<div id="${id}" style="${style}"></div>\n`;
+        } else if (info[1] == 'vega-spec') {
           const id = this.genID();
+          const style = info[3] || 'width: 100%;';
           this.appendScript(`(async function() { vegaEmbed("#${id}", ${text}); })()`);
-          return `<div id="${id}" style="width: 100%;"></div>\n`;
+          return `<div id="${id}" style="${style}"></div>\n`;
         } else {
           return super.code(text, lang, escaped);
         }
