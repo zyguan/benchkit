@@ -19,32 +19,6 @@
   <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.20.2"></script>
   <script src='https://cdn.plot.ly/plotly-2.12.1.min.js'></script>
   <script>
-    class PromClient {
-      constructor(endpoint, headers={}) {
-        this.endpoint = endpoint;
-        this.headers = headers;
-      }
-      queryInstant(params) {
-        return fetch(`${this.endpoint}/api/v1/query?${new URLSearchParams(params).toString()}`, {headers: this.headers})
-          .then(resp => resp.json())
-          .then(body => {
-            console.assert(body.status == 'success' && body.data.resultType == 'vector', 'unexpected response body');
-            const base = typeof params.base === 'object' ? params.base : {};
-            const vals = body.data.result.map(m => ({ ts: m.value[0] * 1000, value: Number(m.value[1]), ...base, ...m.metric }));
-            return vals;
-          })
-      }
-      queryRange(params) {
-        return fetch(`${this.endpoint}/api/v1/query_range?${new URLSearchParams(params).toString()}`, {headers: this.headers})
-          .then(resp => resp.json())
-          .then(body => {
-            console.assert(body.status == 'success' && body.data.resultType == 'matrix', 'unexpected response body');
-            const base = typeof params.base === 'object' ? params.base : {};
-            const vecs = body.data.result.map(m => m.values.map(([t, v]) => ({ ts: t * 1000, value: Number(v), ...base, ...m.metric })));
-            return [].concat(...vecs);
-          })
-      }
-    }
     class Renderer extends marked.Renderer {
       constructor(options) {
         super(options);
